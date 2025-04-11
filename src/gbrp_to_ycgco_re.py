@@ -69,7 +69,7 @@ def convert_rgb_frame_to_ycgco_re(rgb_frame):
     return ycgco_frame
 
 
-def convert_ycgco_re_frame_to_rgb(ycgco_frame):
+def convert_ycgco_re_frame_to_rgb(ycgco_frame, return_gbr=False):
     """
     Convert a single 10-bit YCgCo-RE frame to 8/10-bit RGB.
     """
@@ -98,15 +98,22 @@ def convert_ycgco_re_frame_to_rgb(ycgco_frame):
     rgb_frame[:, :, 1] = np.clip(frame_g, 0, range_rgb_max)
     rgb_frame[:, :, 2] = np.clip(frame_b, 0, range_rgb_max)
 
+    if return_gbr:
+        rgb_frame = rgb_frame[:, :, [1, 2, 0]]
+
     return rgb_frame
 
 
 def process_gbrp_to_ycgco_re(
-        input_file, width, height, start_frame=0, num_frames=None):
+        input_file, width, height, start_frame=0, num_frames=None, decode_only=False):
     """
     Process GBRP (8 Bit) to YCgCo-RE.
     """
-    bytes_per_frame = width * height * 3
+    pixels_per_frame = width * height
+    bytes_per_frame = pixels_per_frame * 3
+    # We dealing 10 bit here
+    if decode_only:
+        bytes_per_frame = bytes_per_frame * 2
 
     # Calculate frames
     file_size = os.path.getsize(input_file)
@@ -121,7 +128,8 @@ def process_gbrp_to_ycgco_re(
     else:
         num_frames = min(num_frames, total_frames - start_frame)
 
-    print(f"Processing {num_frames} frames starting from frame {start_frame}")
+    print(
+        f"Processing {num_frames} frames starting from frame {start_frame}; Total Frames in Video {total_frames}")
 
     with open(input_file, 'rb') as f_in:
         # Skip to start frame
@@ -129,41 +137,60 @@ def process_gbrp_to_ycgco_re(
 
         # Process frames
         for i in range(num_frames):
-            rgb_frame = load_gbrp_frame(f_in, width, height)
-            if rgb_frame is None:
-                break
-
-            ycgco_frame = convert_rgb_frame_to_ycgco_re(rgb_frame)
-            rgb_frame_buffer = convert_ycgco_re_frame_to_rgb(
-                ycgco_frame)
-            round_trip_diff = np.unique(rgb_frame_buffer - rgb_frame)
-            # Print progress occasionally
-            if i == 0 or i == num_frames - 1 or i % 10 == 0:
-                print(
-                    f"Processed frame {start_frame + i + 1}/{start_frame + num_frames}")
-                if len(round_trip_diff) > 1:
+            if decode_only:
+                # Read the frame data and reshape into YCgCo planes
+                ycgco_data = np.frombuffer(
+                    f_in.read(bytes_per_frame), dtype=np.uint16)
+                # Extract the planes and reshape
+                y = ycgco_data[:pixels_per_frame].reshape(height, width)
+                cg = ycgco_data[pixels_per_frame:2 *
+                                pixels_per_frame].reshape(height, width)
+                co = ycgco_data[2 * pixels_per_frame:].reshape(height, width)
+                bit_mask = 0x03FF  # 10-bit mask (1023)
+                ycgco_frame = np.stack(
+                    [y & bit_mask, cg & bit_mask, co & bit_mask], axis=2)
+                gbr_frame_buffer = convert_ycgco_re_frame_to_rgb(
+                    ycgco_frame, return_gbr=True)
+                if i == 0 or i == num_frames - 1 or i % 10 == 0:
                     print(
-                        "Warning: Round-trip conversion mismatch!",
-                        round_trip_diff)
-                else:
-                    print("Round-trip conversion successful.")
+                        f"Processed frame {start_frame + i + 1}/{start_frame + num_frames}")
+                yield gbr_frame_buffer
+            else:
+                rgb_frame = load_gbrp_frame(f_in, width, height)
+                if rgb_frame is None:
+                    break
+                ycgco_frame = convert_rgb_frame_to_ycgco_re(rgb_frame)
+                rgb_frame_buffer = convert_ycgco_re_frame_to_rgb(
+                    ycgco_frame)
+                round_trip_diff = np.unique(rgb_frame_buffer - rgb_frame)
+                # Print progress occasionally
+                if i == 0 or i == num_frames - 1 or i % 10 == 0:
+                    print(
+                        f"Processed frame {start_frame + i + 1}/{start_frame + num_frames}")
+                    if len(round_trip_diff) > 1:
+                        print(
+                            "Warning: Round-trip conversion mismatch!",
+                            round_trip_diff)
+                    else:
+                        print("Round-trip conversion successful.")
 
-            yield ycgco_frame
+                yield ycgco_frame
 
     print(f"Conversion complete.")
 
 
-def save_ycgco_frames_planar(ycgco_frames, output_file):
+def save_ycgco_frames_planar(ycgco_frames, output_file, decode_only=False):
     """
     Save YCgCo-RE frames to a file in planar format.
     """
+    target_dtype = np.uint8 if decode_only else np.uint16
     with open(output_file, 'wb') as f_out:
         frame_count = 0
         for frame in ycgco_frames:
             # Write planar data (Y plane, then Cg plane, then Co plane)
-            frame[:, :, 0].astype(np.uint16).tofile(f_out)  # Y plane
-            frame[:, :, 1].astype(np.uint16).tofile(f_out)  # Cg plane
-            frame[:, :, 2].astype(np.uint16).tofile(f_out)  # Co plane
+            frame[:, :, 0].astype(target_dtype).tofile(f_out)  # Y plane
+            frame[:, :, 1].astype(target_dtype).tofile(f_out)  # Cg plane
+            frame[:, :, 2].astype(target_dtype).tofile(f_out)  # Co plane
             frame_count += 1
 
     print(f"Saved {frame_count} frames to {output_file}")
@@ -192,7 +219,10 @@ if __name__ == "__main__":
 
     # Process arguments
     input_file = args.input_file if args.input_file else 'ducks_take_off_444_720p50_5f_rgb.rgb'
-    output_file = args.output_file if args.output_file else input_file + '_ycgco_re.yuv'
+    if args.decode:
+        output_file = args.output_file if args.output_file else input_file + '_decoded.rgb'
+    else:
+        output_file = args.output_file if args.output_file else input_file + '_ycgco_re.yuv'
     width, height = args.width, args.height
     frame_count = args.frames
     start_frame = args.start
@@ -200,5 +230,9 @@ if __name__ == "__main__":
     print(f"Processing {input_file} ({width}x{height}) to {output_file}")
 
     ycgco_frames = process_gbrp_to_ycgco_re(
-        input_file, width, height, start_frame=0, num_frames=frame_count)
-    save_ycgco_frames_planar(ycgco_frames, output_file)
+        input_file, width, height, start_frame=0, num_frames=frame_count, decode_only=args.decode)
+    save_ycgco_frames_planar(
+        ycgco_frames,
+        output_file,
+        decode_only=args.decode)
+    input_file = args.input_file if args.input_file else ''
