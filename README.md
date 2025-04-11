@@ -43,6 +43,12 @@ options:
   --decode, -d          Decode the YCgCo-RE file back to RGB (default: False)
 ```
 
+## Example Output
+
+| <img src="examples/CosmosSheepRun_SDR_2048x858p24_gbr.png" width="512"> | <img src="examples/CosmosSheepRun_SDR_2048x858p24_ycgco.png" width="512"> |
+|:------------------------------------------:|:------------------------------------------:|
+| *Input Image viewed as RGB* | *YCgCo-RE viewed as RGB* |
+
 
 ## Other References
 
