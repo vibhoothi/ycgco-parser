@@ -55,16 +55,22 @@ def convert_rgb_frame_to_ycgco_re(rgb_frame):
 
     # Apply YCgCo-RE transformation
     frame_co = frame_r - frame_b
-    const_t = frame_b + np.right_shift((frame_co), 1)
+    const_t = frame_b + (frame_co // 2)
     frame_cg = frame_g - const_t
-    frame_y = const_t + np.right_shift(frame_cg, 1)
+    frame_y = const_t + (frame_cg // 2)
 
-    # Clip to valid YCgCo-RE Range if there are any outliers
+    # Add bitshift offset
     ycgco_frame[:, :, 0] = frame_y
-    ycgco_frame[:, :, 1] = np.clip(
-        frame_cg + bitshift_offset, 0, range_ycgco_max)
-    ycgco_frame[:, :, 2] = np.clip(
-        frame_co + bitshift_offset, 0, range_ycgco_max)
+    ycgco_frame[:, :, 1] = frame_cg + bitshift_offset
+    ycgco_frame[:, :, 2] = frame_co + bitshift_offset
+
+    # Check if any values are out of bounds
+    if np.any(ycgco_frame[:, :, 0] < 0) or np.any(ycgco_frame[:, :, 0] > range_ycgco_max):
+        raise ValueError("Y channel out of bounds.")
+    if np.any(ycgco_frame[:, :, 1] < 0) or np.any(ycgco_frame[:, :, 1] > range_ycgco_max):
+        raise ValueError("Cg channel out of bounds.")
+    if np.any(ycgco_frame[:, :, 2] < 0) or np.any(ycgco_frame[:, :, 2] > range_ycgco_max):
+        raise ValueError("Co channel out of bounds.")
 
     return ycgco_frame
 
@@ -88,15 +94,22 @@ def convert_ycgco_re_frame_to_rgb(ycgco_frame, return_gbr=False):
     frame_co = frame_co - bitshift_offset
 
     # Apply inverse YCgCo-RE transformation
-    const_t = frame_y - np.right_shift(frame_cg, 1)
+    const_t = frame_y - (frame_cg // 2)
     frame_g = const_t + frame_cg
-    frame_b = const_t - np.right_shift(frame_co, 1)
+    frame_b = const_t - (frame_co // 2)
     frame_r = frame_b + frame_co
 
-    # Clip to valid RGB Range if there are any outlier
-    rgb_frame[:, :, 0] = np.clip(frame_r, 0, range_rgb_max)
-    rgb_frame[:, :, 1] = np.clip(frame_g, 0, range_rgb_max)
-    rgb_frame[:, :, 2] = np.clip(frame_b, 0, range_rgb_max)
+    rgb_frame[:, :, 0] = frame_r
+    rgb_frame[:, :, 1] = frame_g
+    rgb_frame[:, :, 2] = frame_b
+
+    # Check if any values are out of bounds
+    if np.any(rgb_frame[:, :, 0] < 0) or np.any(rgb_frame[:, :, 0] > range_rgb_max):
+        raise ValueError("R channel out of bounds.")
+    if np.any(rgb_frame[:, :, 1] < 0) or np.any(rgb_frame[:, :, 1] > range_rgb_max):
+        raise ValueError("G channel out of bounds.")
+    if np.any(rgb_frame[:, :, 2] < 0) or np.any(rgb_frame[:, :, 2] > range_rgb_max):
+        raise ValueError("B channel out of bounds.")
 
     if return_gbr:
         rgb_frame = rgb_frame[:, :, [1, 2, 0]]
